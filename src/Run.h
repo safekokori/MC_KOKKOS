@@ -9,11 +9,14 @@ class Run
     Kokkos::View<resultType*, Kokkos::HostSpace> run(unsigned int num_photons)
     {
         Kokkos::View<resultType*, Kokkos::DefaultExecutionSpace> results("results", num_photons);
+        auto rand_pool = RandPoolType(time(NULL));
+        auto strategy = DefaultEmitCollectStrategy(m_mesh);
+
         Kokkos::parallel_for(
             "run", num_photons,
             KOKKOS_LAMBDA(const unsigned int i)
             {
-                auto core = transpose_core(m_mesh);
+                transpose_core core(m_mesh, strategy, rand_pool);
                 core.run();
                 results(i) = (core.result);
             });

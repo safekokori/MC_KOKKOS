@@ -12,11 +12,10 @@ class TetMesh
 {
    private:
     bool hasMinLength = false;
-    Real minLength    = REALMAX;
+    Scalar minLength    = REALMAX;
 
    public:
     Kokkos::View<Pyramid *, Kokkos::DefaultExecutionSpace> pyramids;
-    Kokkos::View<Point *, Kokkos::DefaultExecutionSpace> points;
     typedef struct Neighbor
     {
         // must be trivially copyable
@@ -28,35 +27,39 @@ class TetMesh
         int adjacentCount_3;
     } Neighbor;
     Kokkos::UnorderedMap<int, Neighbor, Kokkos::DefaultExecutionSpace> adjacentPyramids;
-    static Real distance(const Point &a, const Point &b)
+    static Scalar Distance(const Point &a, const Point &b)
     {
-        Real dx = a.x - b.x;
-        Real dy = a.y - b.y;
-        Real dz = a.z - b.z;
+        Scalar dx = a.x - b.x;
+        Scalar dy = a.y - b.y;
+        Scalar dz = a.z - b.z;
         return std::sqrt(dx * dx + dy * dy + dz * dz);
     }
-    Real GetMinLength()
-    {
-        if (!hasMinLength)
-        {
-            return 1e6 * REALEPS;
-        }
-        return minLength;
+    KOKKOS_FUNCTION
+    Scalar GetMinLength() const {
+        return hasMinLength ? minLength : 1e6 * REALEPS;
     }
+    
     void requireMinLength()
     {
         auto policy = Kokkos::RangePolicy<>(0, pyramids.extent(0));
         Kokkos::parallel_reduce(
             "ComputeMinLength", policy,
-            KOKKOS_LAMBDA(const int i, Real &localMinLength)
+            KOKKOS_LAMBDA(const int i, Scalar &localMinLength)
             {
-                Real lengths[6];
-                lengths[0] = distance(points(pyramids(i).p1), points(pyramids(i).p2));
-                lengths[1] = distance(points(pyramids(i).p1), points(pyramids(i).p3));
-                lengths[2] = distance(points(pyramids(i).p1), points(pyramids(i).p4));
-                lengths[3] = distance(points(pyramids(i).p2), points(pyramids(i).p3));
-                lengths[4] = distance(points(pyramids(i).p2), points(pyramids(i).p4));
-                lengths[5] = distance(points(pyramids(i).p3), points(pyramids(i).p4));
+                auto Distance = [](const Point &a, const Point &b)
+                {
+                    Scalar dx = a.x - b.x;
+                    Scalar dy = a.y - b.y;
+                    Scalar dz = a.z - b.z;
+                    return std::sqrt(dx * dx + dy * dy + dz * dz);
+                };
+                Scalar lengths[6];
+                lengths[0] = Distance(pyramids(i).p1, pyramids(i).p2);
+                lengths[1] = Distance(pyramids(i).p1, pyramids(i).p3);
+                lengths[2] = Distance(pyramids(i).p1, pyramids(i).p4);
+                lengths[3] = Distance(pyramids(i).p2, pyramids(i).p3);
+                lengths[4] = Distance(pyramids(i).p2, pyramids(i).p4);
+                lengths[5] = Distance(pyramids(i).p3, pyramids(i).p4);
                 for (int j = 0; j < 6; ++j)
                 {
                     if (lengths[j] < localMinLength)
@@ -65,7 +68,7 @@ class TetMesh
                     }
                 }
             },
-            Kokkos::Min<Real>(minLength));
+            Kokkos::Min<Scalar>(minLength));
         hasMinLength = true;
     }
     void load_from_file(const std::string &filename)
@@ -90,13 +93,12 @@ class TetMesh
         }
 
         // 分配点数组空间
-        points           = Kokkos::View<Point *>("points", numPoints);
-        auto points_host = Kokkos::create_mirror_view(points);
+        auto points_host = Kokkos::View<Point *, Kokkos::HostSpace>("points", numPoints);
 
         // 读取点坐标
         for (int i = 0; i < numPoints; i++)
         {
-            Real x, y, z;
+            Scalar x, y, z;
             file >> x >> y >> z;
             points_host(i) = Point(x, y, z);
         }
@@ -112,8 +114,7 @@ class TetMesh
         }
 
         // 分配四面体数组空间
-        pyramids           = Kokkos::View<Pyramid *>("pyramids", numTets);
-        auto pyramids_host = Kokkos::create_mirror_view(pyramids);
+        auto pyramids_host = Kokkos::View<Pyramid *, Kokkos::HostSpace>("pyramidsHost", numTets);
 
         // 读取四面体顶点索引
         for (int i = 0; i < numTets; i++)
@@ -126,16 +127,13 @@ class TetMesh
         }
 
         // 将数据从host拷贝到device
-        Kokkos::deep_copy(points, points_host);
-        Kokkos::deep_copy(pyramids, pyramids_host);
+        pyramids = Kokkos::create_mirror_view_and_copy(Kokkos::DefaultExecutionSpace(), pyramids_host);
 
         file.close();
         hasMinLength = false;
     }
-    TetMesh(const std::string &filename)
+    void buildNeighbors()
     {
-        load_from_file(filename);
-        // build neighbor
         auto rangePolicy = Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {pyramids.extent(0), pyramids.extent(0)});
         Kokkos::parallel_for(
             "BuildNeighbors", rangePolicy,
@@ -200,6 +198,11 @@ class TetMesh
                     }
                 }
             });
+    }
+    TetMesh(const std::string &filename) : pyramids(Kokkos::View<Pyramid *, Kokkos::DefaultExecutionSpace>("pyramids", 0))
+    {
+        load_from_file(filename);
+        buildNeighbors();
     }
 };
 #endif

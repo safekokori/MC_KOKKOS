@@ -7,14 +7,15 @@ struct Photon3D
 {
     Point pos;
     Vec3f dir;
-    Real weight = 1.0f;
-    Real max_z  = 0;
-    Real Ps     = 0;
-    int type    = 0;
-    bool alive  = true;
+    Scalar weight = 1.0f;
+    Scalar max_z  = 0;
+    Scalar Ps     = 0;
+    int type      = 0;
+    bool alive    = true;
     Index curPyramid;
     Index nextPyramid;
     Face nextFace;
+    KOKKOS_FUNCTION
     Photon3D(Point pos, Vec3f dir) : pos(pos), dir(dir), nextFace({}, {}, {}) {}
 };
 enum class CollectType
@@ -30,68 +31,54 @@ typedef struct resultType
     Index pyramidIndex;
     Point pos;
     Vec3f dir;
-    Real weight;
+    Scalar weight;
 } resultType;
 // 由于虚函数表的问题，在cuda上运行的不能直接使用虚函数
+class DefaultEmitCollectStrategy
+{
+   public:
+    static constexpr int EMIT = 0;
 
+    DefaultEmitCollectStrategy(TetMesh m) : mesh(m), emitPyramids("emitPyramids", m.pyramids.extent(0))
+    {
+        for (Index i = 0; i < mesh.pyramids.extent(0); i++)
+        {
+            if (GetCollectType(i) == CollectType::EMIT)
+            {
+                emitPyramids(emitCount) = i;
+                emitCount++;
+            }
+        }
+    }
+    Kokkos::UnorderedMap<Index, CollectType, Kokkos::DefaultExecutionSpace> collect_map;  //
+    Kokkos::View<Index*, Kokkos::DefaultExecutionSpace> emitPyramids;
+    int emitCount = 0;
+    TetMesh mesh;
+    KOKKOS_FUNCTION
+    CollectType GetCollectType(Index pyIndex) const { return collect_map.value_at(pyIndex); }
+    KOKKOS_FUNCTION
+    void emit(Photon3D* p) const
+    {
+        // TODO: 实现发射逻辑
+    }
+};
 class transpose_core
 {
     // 单个光子的传输过程，包括发射、传输、吸收、散射、收集
     // 必须只含有POD数据和Kokkos的自有数据结构
-    class DefaultEmitCollectStrategy
-    {
-       public:
-        static constexpr int EMIT = 0;
-        DefaultEmitCollectStrategy(TetMesh m)
-            : mesh(m), emitPyramids("emitPyramids", m.pyramids.extent(0))
-        {
-            for (Index i = 0; i < mesh.pyramids.extent(0); i++)
-            {
-                if (GetCollectType(i) == CollectType::EMIT)
-                {
-                    emitPyramids(emitCount) = i;
-                    emitCount++;
-                }
-            }
-        }
-        Kokkos::UnorderedMap<Index, CollectType, Kokkos::DefaultExecutionSpace> collect_map;  //
-        Kokkos::View<Index*, Kokkos::DefaultExecutionSpace> emitPyramids;
-        int emitCount = 0;
-        TetMesh mesh;
-        CollectType GetCollectType(Index pyIndex) const { return collect_map.value_at(pyIndex); }
-        void emit(Photon3D* p)
-        {
-            // 遍历所有pyramid找到emit类型的
-            if (emitCount == 0)
-            {
-                p->alive = false;
-                return;
-            }
-
-            // 随机选择一个emit pyramid
-            int randIndex         = GetRandomUtils().generate_random_int(0, emitCount - 1);
-            Index selectedPyramid = emitPyramids(randIndex);
-
-            // 设置光子初始位置和pyramid
-            p->curPyramid = selectedPyramid;
-            p->pos        = mesh.points(mesh.pyramids(selectedPyramid).p1);
-            //TODO p->dir = 
-            p->alive      = true;
-        }
-    };
 
    public:
-    TetMesh m_mesh;  //根据View的性质，TetMesh实际上是一系列指针
+    TetMesh& m_mesh;  //根据View的性质，TetMesh实际上是一系列指针
     Photon3D m_photon;
     resultType result;
-    DefaultEmitCollectStrategy m_collectStrategy;
-    transpose_core(TetMesh mesh)
-        : m_mesh(mesh),
-          m_collectStrategy(mesh),
-          m_photon(Point(0, 0, 0), Vec3f(0, 0, 1))
+    const RandPoolType& rand_pool;
+    const DefaultEmitCollectStrategy& m_collectStrategy;
+    KOKKOS_INLINE_FUNCTION
+    transpose_core(TetMesh& mesh, const DefaultEmitCollectStrategy& collectStrategy, const RandPoolType& rand_pool)
+        : m_mesh(mesh), m_collectStrategy(collectStrategy), m_photon(Point(0, 0, 0), Vec3f(0, 0, 1)), rand_pool(rand_pool)
     {
-
     }
+    KOKKOS_INLINE_FUNCTION
     void run()
     {
         emit();
@@ -101,32 +88,42 @@ class transpose_core
             roulette();
         }
     }
+    KOKKOS_INLINE_FUNCTION
+    Scalar random(Scalar lower = 0, Scalar upper = 1)
+    {
+        auto gen      = rand_pool.get_state();
+        double result = Kokkos::rand<RandPoolType::generator_type, double>::draw(gen);
+        rand_pool.free_state(gen);
+        return result * (upper - lower) + lower;
+    }
+    KOKKOS_INLINE_FUNCTION
     bool emit()
     {
         // emit a photon
         m_collectStrategy.emit(&m_photon);
         return true;
     }
-    bool Get_next_Pyramid(Index* nextPyramid, Real* dist)
+    KOKKOS_INLINE_FUNCTION
+    bool Get_next_Pyramid(Index* nextPyramid, Scalar* dist)
     {
         auto& curPyramid = m_photon.curPyramid;
         auto results =
             IntersectionUtils::ray_pyramid_intersection(m_mesh.pyramids[curPyramid], m_photon.pos, m_photon.dir);
-
+        auto& result = results.result;
         for (int i = 0; i < 4; i++)
         {
-            if (results(i).hit && results(i).t > 0 && results(i).t > 1e6 * REALEPS)
+            if (result[i].hit && result[i].t > 0 && result[i].t > 1e6 * REALEPS)
             {
-                Point intersection_point = m_photon.pos + m_photon.dir * results(i).t;
+                Point intersection_point = m_photon.pos + m_photon.dir * result[i].t;
                 Point next_point_pos     = intersection_point + m_photon.dir * 0.1 * m_mesh.GetMinLength();
-                *dist                    = results(i).t;
+                *dist                    = result[i].t;
 
-                auto& p1 = results(i).p1;
-                auto& p2 = results(i).p2;
-                auto& p3 = results(i).p3;
+                auto& p1 = result[i].p1;
+                auto& p2 = result[i].p2;
+                auto& p3 = result[i].p3;
                 Face hitFace(p1, p2, p3);
 
-                if (results(i).type == 3)
+                if (result[i].type == 3)
                 {
                     auto adjacentP   = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentPyramids_3;
                     auto adjacentNum = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentCount_3;
@@ -140,7 +137,7 @@ class transpose_core
                         }
                     }
                 }
-                else if (results(i).type == 2)
+                else if (result[i].type == 2)
                 {
                     auto adjacentP   = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentPyramids_2;
                     auto adjacentNum = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentCount_2;
@@ -154,7 +151,7 @@ class transpose_core
                         }
                     }
                 }
-                else if (results(i).type == 1)
+                else if (result[i].type == 1)
                 {
                     auto adjacentP   = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentPyramids_1;
                     auto adjacentNum = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentCount_1;
@@ -178,6 +175,7 @@ class transpose_core
         }
         return false;
     }
+    KOKKOS_INLINE_FUNCTION
     bool move_len(float len)
     {
         m_photon.pos.x += m_photon.dir.x * len;
@@ -185,18 +183,19 @@ class transpose_core
         m_photon.pos.z += m_photon.dir.z * len;
         return true;
     }
+    KOKKOS_INLINE_FUNCTION
     bool move()
     {
-        Real s_;
+        Scalar s_;
         const Pyramid::Attribute& cur_Attr = m_mesh.pyramids[m_photon.curPyramid].value;
-        const Real& mua                    = cur_Attr.mua;
-        const Real& mus                    = cur_Attr.mus;
-        const Real& g                      = cur_Attr.g;
-        const Real& n                      = cur_Attr.n;
+        const Scalar& mua                  = cur_Attr.mua;
+        const Scalar& mus                  = cur_Attr.mus;
+        const Scalar& g                    = cur_Attr.g;
+        const Scalar& n                    = cur_Attr.n;
         // move the photon
         if (mua + mus > 0)
         {
-            s_ = -log(GetRandomUtils().generate_random_double()) / (mua + mus);
+            s_ = -log(random()) / (mua + mus);
         }
         else
         {
@@ -204,7 +203,7 @@ class transpose_core
         }
         while (s_ >= 0 && m_photon.alive)
         {
-            Real dist = 0;
+            Scalar dist = 0;
             Get_next_Pyramid(&m_photon.nextPyramid, &dist);
             auto nowCollectType = m_collectStrategy.GetCollectType(m_photon.nextPyramid);
             switch (nowCollectType)
@@ -245,11 +244,12 @@ class transpose_core
         }
         return true;
     }
+    KOKKOS_INLINE_FUNCTION
     bool roulette()
     {
         if (m_photon.weight < 0.0001)
         {
-            if (GetRandomUtils().generate_random_double() > 0.1)
+            if (random(0, 1) > 0.1)
             {
                 m_photon.alive = false;
                 return false;
@@ -265,6 +265,7 @@ class transpose_core
             return true;
         }
     }
+    KOKKOS_INLINE_FUNCTION
     void Mirror()
     {
         auto n     = m_photon.nextFace.normal();
@@ -274,6 +275,7 @@ class transpose_core
         m_photon.dir.z -= 2.0f * cdot * n.z;
         m_photon.nextPyramid = m_photon.curPyramid;
     }
+    KOKKOS_INLINE_FUNCTION
     void Transmit(float nipnt, float costhi, float costht, Point nor)
     {
         if (costhi > 0.0)
@@ -290,6 +292,7 @@ class transpose_core
         }
         m_photon.curPyramid = m_photon.nextPyramid;
     }
+    KOKKOS_INLINE_FUNCTION
     void DealWithFace()
     {
         auto nor    = m_photon.nextFace.normal();
@@ -324,7 +327,7 @@ class transpose_core
         else
             R = 0.5f * (powf(sinf(thi - tht) / sinf(thi + tht), 2) + powf(tanf(thi - tht) / tanf(thi + tht), 2));
 
-        float xi =  GetRandomUtils().generate_random_double();
+        float xi = random();
 
         if (xi <= R)
         {
@@ -333,6 +336,7 @@ class transpose_core
         }
         Transmit(nipnt, costhi, costht, nor);
     }
+    KOKKOS_INLINE_FUNCTION
     bool Scatter(float g)
     {
         float xi = 0, theta = 0, phi = 0;
@@ -341,16 +345,16 @@ class transpose_core
         // Henye-Greenstein scattering
         if (g != 0.0)
         {
-            xi = GetRandomUtils().generate_random_double();
+            xi = random();
             if ((0.0 < xi) && (xi < 1.0))
                 theta = (1.0f + g2 - powf((1.0f - g2) / (1.0f - g * (1.0f - 2.0f * xi)), 2)) / (2.0f * g);
             else
                 theta = (1.0f - xi) * M_PI;
         }
         else
-            theta = 2.0f * GetRandomUtils().generate_random_double() - 1.0f;
+            theta = 2.0f * random() - 1.0f;
 
-        phi             = 2.0f * M_PI * GetRandomUtils().generate_random_double();
+        phi             = 2.0f * M_PI * random();
         float& cosTheta = theta;
         // Scatter the photon
         float dxn, dyn, dzn;
@@ -384,6 +388,7 @@ class transpose_core
         m_photon.dir.z = dzn;
         return true;
     }
+    KOKKOS_INLINE_FUNCTION
     bool Absorb(float mua, float mus)
     {
         float dwa = m_photon.weight * mua / (mus + mua);
