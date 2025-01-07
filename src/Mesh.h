@@ -15,7 +15,7 @@ class TetMesh
     Scalar minLength    = REALMAX;
 
    public:
-    Kokkos::View<Pyramid *, Kokkos::DefaultExecutionSpace> pyramids;
+    Kokkos::View<Pyramid *, ExecSpace> pyramids;
     typedef struct Neighbor
     {
         // must be trivially copyable
@@ -26,7 +26,7 @@ class TetMesh
         int adjacentCount_2;
         int adjacentCount_3;
     } Neighbor;
-    Kokkos::UnorderedMap<int, Neighbor, Kokkos::DefaultExecutionSpace> adjacentPyramids;
+    Kokkos::UnorderedMap<int, Neighbor, ExecSpace> adjacentPyramids;
     static Scalar Distance(const Point &a, const Point &b)
     {
         Scalar dx = a.x - b.x;
@@ -100,7 +100,7 @@ class TetMesh
         {
             Scalar x, y, z;
             file >> x >> y >> z;
-            points_host(i) = Point(x, y, z);
+            points_host(i) = Point{x, y, z};
         }
 
         // 读取四面体数量
@@ -127,7 +127,7 @@ class TetMesh
         }
 
         // 将数据从host拷贝到device
-        pyramids = Kokkos::create_mirror_view_and_copy(Kokkos::DefaultExecutionSpace(), pyramids_host);
+        pyramids = Kokkos::create_mirror_view_and_copy(ExecSpace(), pyramids_host);
 
         file.close();
         hasMinLength = false;
@@ -199,7 +199,7 @@ class TetMesh
                 }
             });
     }
-    TetMesh(const std::string &filename) : pyramids(Kokkos::View<Pyramid *, Kokkos::DefaultExecutionSpace>("pyramids", 0))
+    TetMesh(const std::string &filename) : pyramids(Kokkos::View<Pyramid *, ExecSpace>("pyramids", 0))
     {
         load_from_file(filename);
         buildNeighbors();

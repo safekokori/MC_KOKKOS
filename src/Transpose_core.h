@@ -15,8 +15,6 @@ struct Photon3D
     Index curPyramid;
     Index nextPyramid;
     Face nextFace;
-    KOKKOS_FUNCTION
-    Photon3D(Point pos, Vec3f dir) : pos(pos), dir(dir), nextFace({}, {}, {}) {}
 };
 enum class CollectType
 {
@@ -50,8 +48,8 @@ class DefaultEmitCollectStrategy
             }
         }
     }
-    Kokkos::UnorderedMap<Index, CollectType, Kokkos::DefaultExecutionSpace> collect_map;  //
-    Kokkos::View<Index*, Kokkos::DefaultExecutionSpace> emitPyramids;
+    Kokkos::UnorderedMap<Index, CollectType, ExecSpace> collect_map;  //
+    Kokkos::View<Index*, ExecSpace> emitPyramids;
     int emitCount = 0;
     TetMesh mesh;
     KOKKOS_FUNCTION
@@ -65,36 +63,42 @@ class DefaultEmitCollectStrategy
 class transpose_core
 {
     // 单个光子的传输过程，包括发射、传输、吸收、散射、收集
-    // 必须只含有POD数据和Kokkos的自有数据结构
+    // 必须只含有POD数据和引用类型（不能有View类型）
 
    public:
-    TetMesh& m_mesh;  //根据View的性质，TetMesh实际上是一系列指针
+    TetMesh& m_mesh;
     Photon3D m_photon;
     resultType result;
     const RandPoolType& rand_pool;
     const DefaultEmitCollectStrategy& m_collectStrategy;
     KOKKOS_INLINE_FUNCTION
     transpose_core(TetMesh& mesh, const DefaultEmitCollectStrategy& collectStrategy, const RandPoolType& rand_pool)
-        : m_mesh(mesh), m_collectStrategy(collectStrategy), m_photon(Point(0, 0, 0), Vec3f(0, 0, 1)), rand_pool(rand_pool)
+        : m_mesh(mesh),
+          m_collectStrategy(collectStrategy),
+          m_photon(),
+          rand_pool(rand_pool)
     {
     }
     KOKKOS_INLINE_FUNCTION
     void run()
     {
         emit();
-        while (m_photon.alive)
+        int i = MAX_ITER;
+        Kokkos::printf("%d\n", __LINE__);
+        while (m_photon.alive && i--)
         {
+            Kokkos::printf("%d\n", __LINE__);
             move();
+            Kokkos::printf("%d\n", __LINE__);
             roulette();
         }
+        Kokkos::printf("%d\n", __LINE__);
+        result.type = CollectType::IGNORE;
     }
     KOKKOS_INLINE_FUNCTION
     Scalar random(Scalar lower = 0, Scalar upper = 1)
     {
-        auto gen      = rand_pool.get_state();
-        double result = Kokkos::rand<RandPoolType::generator_type, double>::draw(gen);
-        rand_pool.free_state(gen);
-        return result * (upper - lower) + lower;
+        return rand_pool.get_state().drand();
     }
     KOKKOS_INLINE_FUNCTION
     bool emit()
@@ -105,10 +109,11 @@ class transpose_core
     }
     KOKKOS_INLINE_FUNCTION
     bool Get_next_Pyramid(Index* nextPyramid, Scalar* dist)
-    {
+    {Kokkos::printf("%d\n", __LINE__);
         auto& curPyramid = m_photon.curPyramid;
         auto results =
             IntersectionUtils::ray_pyramid_intersection(m_mesh.pyramids[curPyramid], m_photon.pos, m_photon.dir);
+            Kokkos::printf("%d\n", __LINE__);
         auto& result = results.result;
         for (int i = 0; i < 4; i++)
         {
@@ -186,13 +191,22 @@ class transpose_core
     KOKKOS_INLINE_FUNCTION
     bool move()
     {
+        Kokkos::printf("%d\n", __LINE__);
         Scalar s_;
-        const Pyramid::Attribute& cur_Attr = m_mesh.pyramids[m_photon.curPyramid].value;
+        Kokkos::printf("%d\n", __LINE__);
+        const auto& pyr = m_mesh.pyramids;
+        Kokkos::printf("%d\n", __LINE__);
+        auto idx = m_photon.curPyramid;
+        Kokkos::printf("%d\n", __LINE__);
+        const auto& pyrI = pyr[idx];
+        Kokkos::printf("%d\n", __LINE__);
+        const Pyramid::Attribute& cur_Attr = pyrI.value;
+        Kokkos::printf("%d\n", __LINE__);
         const Scalar& mua                  = cur_Attr.mua;
         const Scalar& mus                  = cur_Attr.mus;
         const Scalar& g                    = cur_Attr.g;
-        const Scalar& n                    = cur_Attr.n;
         // move the photon
+        Kokkos::printf("%d\n", __LINE__);
         if (mua + mus > 0)
         {
             s_ = -log(random()) / (mua + mus);
@@ -201,10 +215,14 @@ class transpose_core
         {
             s_ = 1;
         }
-        while (s_ >= 0 && m_photon.alive)
+        Kokkos::printf("%d\n", __LINE__);
+        int max_iter = MAX_ITER;
+        while (s_ >= 0 && m_photon.alive && max_iter--)
         {
+            Kokkos::printf("%d\n", __LINE__);
             Scalar dist = 0;
             Get_next_Pyramid(&m_photon.nextPyramid, &dist);
+            Kokkos::printf("%d\n", __LINE__);
             auto nowCollectType = m_collectStrategy.GetCollectType(m_photon.nextPyramid);
             switch (nowCollectType)
             {

@@ -1,11 +1,16 @@
+#include "Kokkos_Core_fwd.hpp"
 #include "Run.h"
 
 int main(int argc, char* argv[])
 {
     Kokkos::ScopeGuard scope_guard(argc, argv);
-    Kokkos::printf("%s\n", Kokkos::DefaultExecutionSpace::name());
-    TetMesh mesh("data/bunny.vol");
+    Kokkos::printf("DefaultExecutionSpace: %s HostSpace: %s\n", ExecSpace::name(),
+                   Kokkos::HostSpace::name());
+    TetMesh mesh("data/MultiLayers.vol");
     Run run(mesh);
-    run.run(1000);
+    auto res = run.run(1);
+    for(int i = 0; i < 1; i++){
+        printf("%d\n", res(i).type);
+    }
     return 0;
 }

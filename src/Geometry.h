@@ -77,10 +77,10 @@ class IntersectionUtils
         Scalar b2 = NANVALUE;
 
         bool hit = false;
-
-        Point p1 = NAN_VEC3F;  // First point of the triangle or edge/vertex
-        Point p2 = NAN_VEC3F;  // Second point of the triangle or edge
-        Point p3 = NAN_VEC3F;  // Third point of the triangle or illegal
+        Vec3f ps{NANVALUE, NANVALUE, NANVALUE};
+        Point p1 = ps;  // First point of the triangle or edge/vertex
+        Point p2 = ps;  // Second point of the triangle or edge
+        Point p3 = ps;  // Third point of the triangle or illegal
                                         // value if not applicable
         int type = 0;                   // 1: vertex, 2: edge, 3: face
     };
