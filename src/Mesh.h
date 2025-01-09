@@ -5,9 +5,9 @@
 #include <fstream>
 #include "Utils.h"
 #include "Geometry.h"
-constexpr unsigned int MAX_NEIGHBOR_COUNT_1   = 32;
-constexpr unsigned int MAX_NEIGHBOR_COUNT_2 = MAX_NEIGHBOR_COUNT_1 * 4;
-constexpr unsigned int MAX_NEIGHBOR_COUNT_3 = MAX_NEIGHBOR_COUNT_1 * 8;
+#define MAX_NEIGHBOR_COUNT_3  32
+#define MAX_NEIGHBOR_COUNT_2  128
+#define MAX_NEIGHBOR_COUNT_1  512
 class TetMesh
 {
    private:
@@ -15,13 +15,14 @@ class TetMesh
     Scalar minLength  = REALMAX;
 
    public:
+   KOKKOS_FUNCTION
    ~TetMesh(){
 
    }
     Kokkos::View<Pyramid *, ExecSpace> pyramids;
-    Kokkos::View<int*[1], ExecSpace> adjacentPyramidsNum_1;
-    Kokkos::View<int*[1], ExecSpace> adjacentPyramidsNum_2;
-    Kokkos::View<int*[1], ExecSpace> adjacentPyramidsNum_3;
+    Kokkos::View<int*, ExecSpace> adjacentPyramidsNum_1;
+    Kokkos::View<int*, ExecSpace> adjacentPyramidsNum_2;
+    Kokkos::View<int*, ExecSpace> adjacentPyramidsNum_3;
     Kokkos::View<int*[MAX_NEIGHBOR_COUNT_1], ExecSpace> adjacentPyramids_1;
     Kokkos::View<int*[MAX_NEIGHBOR_COUNT_2], ExecSpace> adjacentPyramids_2;
     Kokkos::View<int*[MAX_NEIGHBOR_COUNT_3], ExecSpace> adjacentPyramids_3;
@@ -40,7 +41,7 @@ class TetMesh
         auto policy = Kokkos::RangePolicy<>(0, pyramids.extent(0));
         Kokkos::parallel_reduce(
             "ComputeMinLength", policy,
-            KOKKOS_LAMBDA(const int i, Scalar &localMinLength)
+            KOKKOS_CLASS_LAMBDA(const int i, Scalar &localMinLength)
             {
                 auto Distance = [](const Point &a, const Point &b)
                 {
@@ -140,7 +141,7 @@ class TetMesh
         auto rangePolicy = Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {pyramids.extent(0), pyramids.extent(0)});
         Kokkos::parallel_for(
             "BuildNeighbors", rangePolicy,
-            KOKKOS_LAMBDA(const int i, const int j)
+            KOKKOS_CLASS_LAMBDA(const int i, const int j)
             {
                 if (i == j) return;
                 int count = 0;
@@ -166,8 +167,8 @@ class TetMesh
                 }
                 if (count == 3)
                 {
-                    int index = Kokkos::atomic_fetch_add(&(adjacentPyramidsNum_3(i, 0)), 1);
-                    if (index < MAX_NEIGHBOR_COUNT_1)
+                    int index = Kokkos::atomic_fetch_add(&(adjacentPyramidsNum_3(i)), 1);
+                    if (index < MAX_NEIGHBOR_COUNT_3)
                     {
                         adjacentPyramids_3(i, index) = j;
                     }
@@ -178,7 +179,7 @@ class TetMesh
                 }
                 else if (count == 2)
                 {
-                    int index = Kokkos::atomic_fetch_add(&(adjacentPyramidsNum_2(i, 0)), 1);
+                    int index = Kokkos::atomic_fetch_add(&(adjacentPyramidsNum_2(i)), 1);
                     if (index < MAX_NEIGHBOR_COUNT_2)
                     {
                         adjacentPyramids_2(i, index) = j;
@@ -190,8 +191,8 @@ class TetMesh
                 }
                 else if (count == 1)
                 {
-                    int index = Kokkos::atomic_fetch_add(&(adjacentPyramidsNum_1(i, 0)), 1);
-                    if (index < MAX_NEIGHBOR_COUNT_3)
+                    int index = Kokkos::atomic_fetch_add(&(adjacentPyramidsNum_1(i)), 1);
+                    if (index < MAX_NEIGHBOR_COUNT_1)
                     {
                         adjacentPyramids_1(i, index) = j;
                     }
@@ -202,27 +203,24 @@ class TetMesh
                 }
             });
     }
-    void init_adjacentPyramidsNum()
-    {
-        //TODO something wrong here
-        adjacentPyramidsNum_1 = Kokkos::View<int *[1], ExecSpace>("adjacentPyramidsNum_1", pyramids.extent(0));
-        adjacentPyramidsNum_2 = Kokkos::View<int *[1], ExecSpace>("adjacentPyramidsNum_2", pyramids.extent(0));
-        adjacentPyramidsNum_3 = Kokkos::View<int *[1], ExecSpace>("adjacentPyramidsNum_3", pyramids.extent(0));
-        Kokkos::parallel_for("InitadjacentPyramidsNum_1", 1, KOKKOS_LAMBDA (const int& i) {
-            adjacentPyramidsNum_1(i, 0) = 0;
-            adjacentPyramidsNum_2(i, 0) = 0;
-            adjacentPyramidsNum_3(i, 0) = 0;
-        });
+    TetMesh(const std::string &filename){
+        Init(filename);
     }
-    TetMesh(const std::string &filename)
+    void Init(const std::string &filename)
     {
         load_from_file(filename);
-        init_adjacentPyramidsNum();
+        adjacentPyramidsNum_1 = Kokkos::View<int *, ExecSpace>("adjacentPyramidsNum_1", pyramids.extent(0));
+        adjacentPyramidsNum_2 = Kokkos::View<int *, ExecSpace>("adjacentPyramidsNum_2", pyramids.extent(0));
+        adjacentPyramidsNum_3 = Kokkos::View<int *, ExecSpace>("adjacentPyramidsNum_3", pyramids.extent(0));
+        Kokkos::parallel_for("InitadjacentPyramidsNum_1", pyramids.extent(0), KOKKOS_CLASS_LAMBDA (const unsigned int i) {
+            adjacentPyramidsNum_1(i) = 0;
+            adjacentPyramidsNum_2(i) = 0;
+            adjacentPyramidsNum_3(i) = 0;
+        });
         adjacentPyramids_3 = Kokkos::View<int *[MAX_NEIGHBOR_COUNT_3], ExecSpace>("adjacentPyramids_3", pyramids.extent(0));
         adjacentPyramids_2 = Kokkos::View<int *[MAX_NEIGHBOR_COUNT_2], ExecSpace>("adjacentPyramids_2", pyramids.extent(0));
         adjacentPyramids_1 = Kokkos::View<int *[MAX_NEIGHBOR_COUNT_1], ExecSpace>("adjacentPyramids_1", pyramids.extent(0));
 
-        
         buildNeighbors();
     }
 };

@@ -11,10 +11,11 @@ class Run
         Kokkos::View<resultType*, ExecSpace> results("results", num_photons);
         auto rand_pool = RandPoolType(time(NULL));
         TetMesh m_mesh(m_mesh_path);
+        Kokkos::UnorderedMap<Index, CollectType, ExecSpace> collect_map(m_mesh.pyramids.extent(0));
         auto strategy = DefaultEmitCollectStrategy(collect_map);
         Kokkos::parallel_for(
             "run", Kokkos::RangePolicy<ExecSpace>(0, num_photons),
-            KOKKOS_LAMBDA(const unsigned int i)
+            KOKKOS_CLASS_LAMBDA(const unsigned int i)
             {
                 transpose_core core(m_mesh, strategy, rand_pool);
                 core.run();

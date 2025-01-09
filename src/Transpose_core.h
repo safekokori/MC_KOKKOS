@@ -124,7 +124,7 @@ class transpose_core
 
                 if (result[i].type == 3)
                 {
-                    auto adjacentNum = m_mesh.adjacentPyramidsNum_3(m_photon.curPyramid, 0);
+                    auto adjacentNum = m_mesh.adjacentPyramidsNum_3(m_photon.curPyramid);
                     KOKKOS_ASSERT(adjacentNum < m_mesh.adjacentPyramids_3.extent(1));
                     for (int j = 0; j < adjacentNum; j++)
                     {
@@ -138,7 +138,7 @@ class transpose_core
                 }
                 else if (result[i].type == 2)
                 {
-                    auto adjacentNum = m_mesh.adjacentPyramidsNum_2(m_photon.curPyramid, 0);
+                    auto adjacentNum = m_mesh.adjacentPyramidsNum_2(m_photon.curPyramid);
                     KOKKOS_ASSERT(adjacentNum < m_mesh.adjacentPyramids_2.extent(1));
                     auto adjacentP   = m_mesh.adjacentPyramids_2(m_photon.curPyramid, adjacentNum);
                     for (int j = 0; j < adjacentNum; j++)
@@ -153,7 +153,7 @@ class transpose_core
                 }
                 else if (result[i].type == 1)
                 {
-                    auto adjacentNum = m_mesh.adjacentPyramidsNum_1(m_photon.curPyramid, 0);
+                    auto adjacentNum = m_mesh.adjacentPyramidsNum_1(m_photon.curPyramid);
                     KOKKOS_ASSERT(adjacentNum < m_mesh.adjacentPyramids_1.extent(1));
                     auto adjacentP   = m_mesh.adjacentPyramids_1(m_photon.curPyramid, adjacentNum);
                     for (int j = 0; j < adjacentNum; j++)
