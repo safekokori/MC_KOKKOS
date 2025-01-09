@@ -1,6 +1,7 @@
 #ifndef TRANSPOSE_CORE_H
 #define TRANSPOSE_CORE_H
 #include <iostream>
+#include "Kokkos_Assert.hpp"
 #include "Mesh.h"
 
 struct Photon3D
@@ -36,24 +37,16 @@ class DefaultEmitCollectStrategy
 {
    public:
     static constexpr int EMIT = 0;
-
-    DefaultEmitCollectStrategy(TetMesh m) : mesh(m), emitPyramids("emitPyramids", m.pyramids.extent(0))
-    {
-        for (Index i = 0; i < mesh.pyramids.extent(0); i++)
-        {
-            if (GetCollectType(i) == CollectType::EMIT)
-            {
-                emitPyramids(emitCount) = i;
-                emitCount++;
-            }
-        }
-    }
-    Kokkos::UnorderedMap<Index, CollectType, ExecSpace> collect_map;  //
-    Kokkos::View<Index*, ExecSpace> emitPyramids;
+    Kokkos::UnorderedMap<Index, CollectType, ExecSpace>& collect_map;
+    DefaultEmitCollectStrategy(Kokkos::UnorderedMap<Index, CollectType, ExecSpace>& collect_map) : collect_map(collect_map) {}
+    
     int emitCount = 0;
-    TetMesh mesh;
     KOKKOS_FUNCTION
-    CollectType GetCollectType(Index pyIndex) const { return collect_map.value_at(pyIndex); }
+    CollectType GetCollectType(Index pyIndex) const
+    {
+        Kokkos::printf("%s\n", __LINE__);
+        return collect_map.value_at(pyIndex);
+    }
     KOKKOS_FUNCTION
     void emit(Photon3D* p) const
     {
@@ -66,17 +59,15 @@ class transpose_core
     // 必须只含有POD数据和引用类型（不能有View类型）
 
    public:
-    TetMesh& m_mesh;
+    const TetMesh& m_mesh;
     Photon3D m_photon;
     resultType result;
     const RandPoolType& rand_pool;
     const DefaultEmitCollectStrategy& m_collectStrategy;
     KOKKOS_INLINE_FUNCTION
-    transpose_core(TetMesh& mesh, const DefaultEmitCollectStrategy& collectStrategy, const RandPoolType& rand_pool)
-        : m_mesh(mesh),
-          m_collectStrategy(collectStrategy),
-          m_photon(),
-          rand_pool(rand_pool)
+    transpose_core(const TetMesh& mesh, const DefaultEmitCollectStrategy& collectStrategy,
+                   const RandPoolType& rand_pool)
+        : m_mesh(mesh), m_collectStrategy(collectStrategy), m_photon(), rand_pool(rand_pool)
     {
     }
     KOKKOS_INLINE_FUNCTION
@@ -84,22 +75,25 @@ class transpose_core
     {
         emit();
         int i = MAX_ITER;
-        Kokkos::printf("%d\n", __LINE__);
+        checkInit();
         while (m_photon.alive && i--)
         {
-            Kokkos::printf("%d\n", __LINE__);
             move();
-            Kokkos::printf("%d\n", __LINE__);
             roulette();
         }
-        Kokkos::printf("%d\n", __LINE__);
+
         result.type = CollectType::IGNORE;
     }
     KOKKOS_INLINE_FUNCTION
-    Scalar random(Scalar lower = 0, Scalar upper = 1)
+    void checkInit()
     {
-        return rand_pool.get_state().drand();
+        Kokkos::printf("m_photon.curPyramid: %d\n", m_photon.curPyramid);
+        Kokkos::printf("m_mesh.pyramids.extent(0): %d\n", m_mesh.pyramids.extent(0));
+        KOKKOS_ASSERT(m_photon.curPyramid >= -1);
+        KOKKOS_ASSERT(m_photon.curPyramid < m_mesh.pyramids.extent(0));
     }
+    KOKKOS_INLINE_FUNCTION
+    Scalar random(Scalar lower = 0, Scalar upper = 1) { return rand_pool.get_state().drand(); }
     KOKKOS_INLINE_FUNCTION
     bool emit()
     {
@@ -109,11 +103,11 @@ class transpose_core
     }
     KOKKOS_INLINE_FUNCTION
     bool Get_next_Pyramid(Index* nextPyramid, Scalar* dist)
-    {Kokkos::printf("%d\n", __LINE__);
+    {
         auto& curPyramid = m_photon.curPyramid;
         auto results =
             IntersectionUtils::ray_pyramid_intersection(m_mesh.pyramids[curPyramid], m_photon.pos, m_photon.dir);
-            Kokkos::printf("%d\n", __LINE__);
+
         auto& result = results.result;
         for (int i = 0; i < 4; i++)
         {
@@ -130,11 +124,11 @@ class transpose_core
 
                 if (result[i].type == 3)
                 {
-                    auto adjacentP   = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentPyramids_3;
-                    auto adjacentNum = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentCount_3;
+                    auto adjacentNum = m_mesh.adjacentPyramidsNum_3(m_photon.curPyramid, 0);
+                    KOKKOS_ASSERT(adjacentNum < m_mesh.adjacentPyramids_3.extent(1));
                     for (int j = 0; j < adjacentNum; j++)
                     {
-                        auto& nextPyramid_ = adjacentP[j];
+                        auto& nextPyramid_ = m_mesh.adjacentPyramids_3(m_photon.curPyramid, j);
                         if (m_mesh.pyramids[nextPyramid_].HasFace(hitFace))
                         {
                             *nextPyramid = nextPyramid_;
@@ -144,11 +138,12 @@ class transpose_core
                 }
                 else if (result[i].type == 2)
                 {
-                    auto adjacentP   = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentPyramids_2;
-                    auto adjacentNum = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentCount_2;
+                    auto adjacentNum = m_mesh.adjacentPyramidsNum_2(m_photon.curPyramid, 0);
+                    KOKKOS_ASSERT(adjacentNum < m_mesh.adjacentPyramids_2.extent(1));
+                    auto adjacentP   = m_mesh.adjacentPyramids_2(m_photon.curPyramid, adjacentNum);
                     for (int j = 0; j < adjacentNum; j++)
                     {
-                        auto& nextPyramid_ = adjacentP[j];
+                        auto& nextPyramid_ = m_mesh.adjacentPyramids_2(m_photon.curPyramid, j);
                         if (m_mesh.pyramids[nextPyramid_].InPyramid(next_point_pos))
                         {
                             *nextPyramid = nextPyramid_;
@@ -158,11 +153,12 @@ class transpose_core
                 }
                 else if (result[i].type == 1)
                 {
-                    auto adjacentP   = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentPyramids_1;
-                    auto adjacentNum = m_mesh.adjacentPyramids.value_at(curPyramid).adjacentCount_1;
+                    auto adjacentNum = m_mesh.adjacentPyramidsNum_1(m_photon.curPyramid, 0);
+                    KOKKOS_ASSERT(adjacentNum < m_mesh.adjacentPyramids_1.extent(1));
+                    auto adjacentP   = m_mesh.adjacentPyramids_1(m_photon.curPyramid, adjacentNum);
                     for (int j = 0; j < adjacentNum; j++)
                     {
-                        auto& nextPyramid_ = adjacentP[j];
+                        auto& nextPyramid_ = m_mesh.adjacentPyramids_1(m_photon.curPyramid, j);
                         if (m_mesh.pyramids[nextPyramid_].InPyramid(next_point_pos))
                         {
                             *nextPyramid = nextPyramid_;
@@ -191,22 +187,16 @@ class transpose_core
     KOKKOS_INLINE_FUNCTION
     bool move()
     {
-        Kokkos::printf("%d\n", __LINE__);
         Scalar s_;
-        Kokkos::printf("%d\n", __LINE__);
-        const auto& pyr = m_mesh.pyramids;
-        Kokkos::printf("%d\n", __LINE__);
-        auto idx = m_photon.curPyramid;
-        Kokkos::printf("%d\n", __LINE__);
-        const auto& pyrI = pyr[idx];
-        Kokkos::printf("%d\n", __LINE__);
+        const auto& pyr                    = m_mesh.pyramids;
+        auto idx                           = m_photon.curPyramid;
+        const auto& pyrI                   = pyr[idx];
         const Pyramid::Attribute& cur_Attr = pyrI.value;
-        Kokkos::printf("%d\n", __LINE__);
         const Scalar& mua                  = cur_Attr.mua;
         const Scalar& mus                  = cur_Attr.mus;
         const Scalar& g                    = cur_Attr.g;
+        KOKKOS_ASSERT(idx < pyr.extent(0));
         // move the photon
-        Kokkos::printf("%d\n", __LINE__);
         if (mua + mus > 0)
         {
             s_ = -log(random()) / (mua + mus);
@@ -215,14 +205,17 @@ class transpose_core
         {
             s_ = 1;
         }
-        Kokkos::printf("%d\n", __LINE__);
+
         int max_iter = MAX_ITER;
         while (s_ >= 0 && m_photon.alive && max_iter--)
         {
-            Kokkos::printf("%d\n", __LINE__);
             Scalar dist = 0;
-            Get_next_Pyramid(&m_photon.nextPyramid, &dist);
-            Kokkos::printf("%d\n", __LINE__);
+            if(!Get_next_Pyramid(&m_photon.nextPyramid, &dist)){
+                m_photon.alive = false;
+                Kokkos::printf("[TetMesh ERROR] GetCollectType not completed\n");
+                return false;
+            }
+            Kokkos::printf("m_photon.nextPyramid: %d\n", m_photon.nextPyramid);
             auto nowCollectType = m_collectStrategy.GetCollectType(m_photon.nextPyramid);
             switch (nowCollectType)
             {
@@ -233,33 +226,38 @@ class transpose_core
                     result.pos          = m_photon.pos;
                     result.dir          = m_photon.dir;
                     result.weight       = m_photon.weight;
-                    break;
+                    return true;
                 case CollectType::OUTOFRANGE:
                     m_photon.alive = false;
                     result.type    = CollectType::OUTOFRANGE;
+                    return true;
                     break;
                 case CollectType::IGNORE: break;
                 default: break;
             }
-
             if (s_ > dist)
             {
+                Kokkos::printf("%s\n", __LINE__);
                 m_photon.Ps += dist;
                 move_len(dist);
                 s_ -= dist;
                 m_photon.pos = m_photon.pos + m_photon.dir * dist;
                 DealWithFace();
+                Kokkos::printf("%s\n", __LINE__);
             }
             else
             {
                 move_len(s_);
+                Kokkos::printf("%s\n", __LINE__);
                 m_photon.Ps += s_;
                 Absorb(mua, mus);
+                Kokkos::printf("%s\n", __LINE__);
                 Scatter(g);
                 s_ = 0;
             }
             m_photon.max_z = m_photon.max_z > m_photon.pos.z ? m_photon.max_z : m_photon.pos.z;
         }
+        Kokkos::printf("%s\n", __LINE__);
         return true;
     }
     KOKKOS_INLINE_FUNCTION

@@ -85,5 +85,5 @@ typedef struct Vec3f
 } Vec3f;
 
 typedef typename Kokkos::Random_XorShift64_Pool<ExecSpace> RandPoolType;
-constexpr unsigned int MAX_ITER = 1000;
+constexpr unsigned int MAX_ITER = 100;
 #endif  // UTILS_H
