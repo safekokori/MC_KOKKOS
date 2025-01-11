@@ -1,9 +1,9 @@
 not completed
 
 # 环境
->需要cuda12.0以上环境，需要安装cuda-toolkit
->需要安装gcc-12.0以上，不能使用msvc
->建议使用clangd
+- 需要cuda12.0以上toolkit
+- 需要gcc-12.0以上，不能使用msvc
+- 补全建议使用clangd
 
 # 编译
 
@@ -11,7 +11,12 @@ not completed
 bash ./buildAll.sh -o cuda
 ```
 # TODO
-
-- 解决warning
-- 完成emit部分
+- Collection辅助系统
 - Ascan测试
+- Bscan测试
+- 可视化
+
+# 已实现功能
+- 指定坐标和方向的光子发射
+- LOG功能
+- Collection功能

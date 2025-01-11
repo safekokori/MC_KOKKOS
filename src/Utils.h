@@ -18,11 +18,15 @@ typedef Kokkos::Random_XorShift64_Pool<> RandPool;
 
 // all class need to be POD
 typedef float Scalar;
-constexpr Scalar REALMIN  = -FLT_MAX;
+constexpr Scalar REALMIN  = FLT_MIN;
 constexpr Scalar REALMAX  = FLT_MAX;
 constexpr Scalar REALEPS  = 1e-15;
-constexpr Scalar NANVALUE = -FLT_MAX;
-typedef size_t Index;
+constexpr Scalar NANVALUE = REALMIN;
+KOKKOS_INLINE_FUNCTION
+bool IsNan(Scalar x){
+    return x <= NANVALUE+REALEPS || x >= NANVALUE-2;
+}
+typedef int Index;
 constexpr Index ILLEGAL_INDEX = std::numeric_limits<Index>::quiet_NaN();
 typedef struct Vec3f
 {

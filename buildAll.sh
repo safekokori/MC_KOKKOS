@@ -66,7 +66,7 @@ esac
 if [[ -n "$CUSTOM_KOKKOS_PATH" ]]; then
     CMAKE_CMD+=" -DKokkos_ROOT=$CUSTOM_KOKKOS_PATH"
 fi
-
+CMAKE_CMD+=" -DKokkos_ENABLE_DEBUG=ON"
 # Print CMake command for debugging
 echo "Running CMake command: $CMAKE_CMD"
 
